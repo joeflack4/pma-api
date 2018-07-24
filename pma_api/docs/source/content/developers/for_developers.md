@@ -1,10 +1,6 @@
-# Developer Documentation
+# PMA API
 #### `master` [![CircleCI](https://circleci.com/gh/PMA-2020/pma-api/tree/master.svg?style=svg&circle-token=3cd5fffe3dad1d27e6cc1000307bc299e2ef3e77)](https://circleci.com/gh/PMA-2020/pma-api/tree/master) |  `develop` [![CircleCI](https://circleci.com/gh/PMA-2020/pma-api/tree/develop.svg?style=svg&circle-token=3cd5fffe3dad1d27e6cc1000307bc299e2ef3e77)](https://circleci.com/gh/PMA-2020/pma-api/tree/develop)
-
-## About user documentation
-Extensive user documentation is available at either of the following sites:
-- http://api.pma2020.org
-- http://api-docs.pma2020.org
+This is the PMA2020 API. You can access it at: http://api.pma2020.org
 
 ## Installation
 ### System dependencies
