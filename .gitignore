@@ -8,3 +8,8 @@ logs/
 tags
 test/files/ignored/*
 *.swp
+
+.env
+data/db_backups/
+redis-stable/
+test/ignored*
