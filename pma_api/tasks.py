@@ -105,13 +105,13 @@ def download_dataset_from_db(dataset_name: str,
     return file_path
 
 
-def save_file_from_bytesio(file: BytesIO, file_path: str, attempt: int = 1):
+def save_file_from_bytesio(file: BytesIO, file_path: str, _attempt: int = 1):
     """Save file at a specific location.
 
     Args:
         file (BytesIO): File.
         file_path (str): File name.
-        attempt (int): Attempt number for trying to save file.
+        _attempt (int): Attempt number for trying to save file.
     """
     max_attempts = 2
     try:
@@ -121,19 +121,19 @@ def save_file_from_bytesio(file: BytesIO, file_path: str, attempt: int = 1):
 
     except FileNotFoundError:
         os.mkdir(os.path.dirname(file_path))
-        if attempt < max_attempts:
+        if _attempt < max_attempts:
             save_file_from_bytesio(file=file, file_path=file_path,
-                                   attempt=attempt+1)
+                                   _attempt=_attempt + 1)
 
 
 def save_file_from_bytes(file_bytes: bytes, file_path: str,
-                         attempt: int = 1):
+                         _attempt: int = 1):
     """Save file_bytes at a specific location.
 
     Args:
         file_bytes (bytes): File bytes.
         file_path (str): File name.
-        attempt (int): Attempt number for trying to save file_bytes.
+        _attempt (int): Attempt number for trying to save file_bytes.
     """
     max_attempts = 2
     try:
@@ -143,9 +143,9 @@ def save_file_from_bytes(file_bytes: bytes, file_path: str,
 
     except FileNotFoundError:
         os.mkdir(os.path.dirname(file_path))
-        if attempt < max_attempts:
+        if _attempt < max_attempts:
             save_file_from_bytes(file_bytes=file_bytes, file_path=file_path,
-                                 attempt=attempt+1)
+                                 _attempt=_attempt + 1)
 
 
 def load_local_dataset(dataset_name: str) -> FileStorage:

@@ -18,6 +18,8 @@ LOGS_DIR = os.path.abspath(os.path.join(PROJECT_ROOT_DIR, 'logs'))
 ERROR_LOG_PATH = os.path.join(LOGS_DIR, 'error-logfile.log')
 # noinspection PyUnresolvedReferences
 PID_FILE_PATH = os.path.join(PROJECT_ROOT_DIR, 'pma-api_process-id.pid')
+API_DATASET_FILE_PREFIX = 'api_data'
+UI_DATASET_FILE_PREFIX = 'ui_data'
 
 REFERENCES = {  # TODO: What this is used for should be implemented different
     'routes': {
@@ -69,10 +71,11 @@ class Config:
     WTF_CSRF_ENABLED = True
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
-    DATABASE_NAME = os.getenv('DATABASE_NAME', 'pmaapi')
+    DATABASE_HOST = os.getenv('DATABASE_HOST', 'localhost')
+    DATABASE_PORT = os.getenv('DATABASE_PORT', 5432)
     DATABASE_USER = os.getenv('DATABASE_USER', 'pmaapi')
     DATABASE_PASSWORD = os.getenv('DATABASE_PASSWORD', 'pmaapi')
-    DATABASE_PORT = os.getenv('DATABASE_PORT', '5432')
+    DATABASE_NAME = os.getenv('DATABASE_NAME', 'pmaapi')
 
     SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')
     CELERY_BROKER_URL = os.getenv('MESSAGE_BROKER_URL')

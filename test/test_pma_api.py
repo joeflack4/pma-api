@@ -374,26 +374,34 @@ class TestDbFunctions(PmaApiTest):
         self.assertGreater(size_in_kb, threshold, msg=msg)
 
     def test_backup_local(self):
-        """Test backup db"""
+        """Test backup of db locally"""
         self.backup_static(self.backup_local_and_get_file_size)
 
     def test_restore_local(self):
-        """Test restore db"""
+        """Test restore of db from a local backup"""
         hash_before, hash_after = self.backup_restore_local_and_get_sizes()
 
         self.assertEqual(hash_before, hash_after)
 
     def test_backup_cloud(self):
-        """Test backup db"""
+        """Test backup of db to the cloud"""
         print(self.s3_upload_prompt)
         self.backup_static(self.backup_cloud_and_get_file_size)
 
     def test_restore_cloud(self):
-        """Test restore db"""
+        """Test restore of db from a cloud backup"""
         print(self.s3_upload_prompt)
         hash_before, hash_after = self.backup_restore_cloud_and_get_sizes()
 
         self.assertEqual(hash_before, hash_after)
+
+
+class TestAsync(PmaApiTest):
+    """Test async functions, e.g. task queue Celery and message broker"""
+
+    def test_async(self):
+        """Test async functions, e.g. task queue Celery and message broker"""
+        pass
 
 
 if __name__ == '__main__':

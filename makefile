@@ -84,7 +84,9 @@ virtualenvwrapper-deactivate: deactivate
 db:
 	@python3 manage.py initdb --overwrite
 db-production: db
-release:
+# TODO - fix some issues causing tests to fail when run on Heroku
+release: test
+#release:
 	@python3 manage.py release
 translations:
 	@python3 manage.py initdb --translations
@@ -133,43 +135,38 @@ serve-dev-network-accessible:
 	--capture-output \
 	--pythonpath python3
 # serve-production: D="run in background, p="path to save file w/ process ID"
-# TODO: pass the port explicitly
 serve-production:
-	gunicorn run:app -D -p pma-api_process-id.pid
+	gunicorn -D -p pma-api_process-id.pid --bind 0.0.0.0:${PORT} run:app
 connect-production:
 	heroku run bash --app pma-api
 connect-staging:
 	heroku run bash --app pma-api-staging
 production-push:
-	git status
-	printf "\nGit status should have reported 'nothing to commit, working tree\
+	@ git status
+	@ printf "\nGit status should have reported 'nothing to commit, working tree\
 	 clean'. Otherwise you should cancel this command, make sure changes are\
 	  committed, and run it again.\n\n"
-	git checkout master
-	git branch -D production
-	git checkout -b production
-	git push -u trunk production --force
-	git branch -D NULL
-	git checkout develop
-	git checkout -b NULL
-	clear
-	git status
-	git branch
+	@ git checkout -b production
+	@ git push -u trunk production --force
+	@ git branch -D NULL
+	@ git checkout -b NULL
+	@ git branch -D production
+	@ clear
+	@ git status
+	@ git branch
 staging-push:
-	git status
-	printf "\nGit status should have reported 'nothing to commit, working \
+	@ git status
+	@ printf "\nGit status should have reported 'nothing to commit, working \
 	tree clean'. Otherwise you should cancel this command, make sure changes \
 	are committed, and run it again.\n\n"
-	git checkout develop
-	git branch -D staging
-	git checkout -b staging
-	git push -u trunk staging --force
-	git branch -D NULL
-	git checkout develop
-	git checkout -b NULL
-	clear
-	git status
-	git branch
+	@ git checkout -b staging
+	@ git push -u trunk staging --force
+	@ git branch -D NULL
+	@ git checkout -b NULL
+	@ git branch -D staging
+	@ clear
+	@ git status
+	@ git branch
 logs:
 	heroku logs --app ppp-web
 logs-staging:

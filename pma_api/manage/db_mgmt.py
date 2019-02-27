@@ -8,7 +8,7 @@ import subprocess
 from copy import copy
 from datetime import datetime
 from time import time
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import xlrd
 import sqlalchemy
@@ -21,14 +21,15 @@ from pma_api import create_app, db
 from pma_api.config import DATA_DIR, BACKUPS_DIR, Config, \
     IGNORE_SHEET_PREFIX, DATA_SHEET_PREFIX, AWS_S3_STORAGE_BUCKETNAME, \
     S3_BACKUPS_DIR_PATH, S3_DATASETS_DIR_PATH, S3_UI_DATA_DIR_PATH, \
-    UI_DATA_DIR, DATASETS_DIR
+    UI_DATA_DIR, DATASETS_DIR, API_DATASET_FILE_PREFIX as API_PREFIX, \
+    UI_DATASET_FILE_PREFIX as UI_PREFIX
 from pma_api.error import InvalidDataFileError, PmaApiDbInteractionError, \
     PmaApiException
 from pma_api.models import (Cache, Characteristic, CharacteristicGroup,
                             Country, Data, EnglishString, Geography, Indicator,
                             ApiMetadata, Survey, Translation, Dataset)
 from pma_api.utils import most_common
-from pma_api.manage.utils import log_process_stderr
+from pma_api.manage.utils import log_process_stderr, run_proc
 
 METADATA_MODEL_MAP = (
     ('geography', Geography),
@@ -140,7 +141,7 @@ class TaskTracker:
         Usage optional
         """
         self.completion_ratio: float = float(0)
-        self.status: str = 'Starting task: ' + \
+        self.status: str = 'Task start: ' + \
                            ' {}'.format(self.name) if self.name else ''
         self._report(silence_percent=True)
 
@@ -148,6 +149,9 @@ class TaskTracker:
         """Register and report next sub-task begin"""
         self.completion_ratio: float = \
             1 - (len(self.queue) / self.tot_sub_tasks)
+        first_task: bool = int(self.completion_ratio) == 0
+        if first_task:
+            self.begin()
         self.status: str = self.queue.pop(0)
         self._report()
 
@@ -157,7 +161,7 @@ class TaskTracker:
         Usage optional
         """
         self.completion_ratio: float = float(1)
-        self.status: str = 'Completed' + \
+        self.status: str = 'Task complete: ' + \
                            ' {}'.format(self.name) if self.name else ''
         self._report()
 
@@ -234,12 +238,14 @@ def get_data_file_by_glob(pattern):
 
 def get_api_data():
     """Get API data."""
-    return get_data_file_by_glob(os.path.join(DATA_DIR, 'api_data*.xlsx'))
+    pattern: str = API_PREFIX + '*.xlsx'
+    return get_data_file_by_glob(os.path.join(DATA_DIR, pattern))
 
 
 def get_ui_data():
     """Get API data."""
-    return get_data_file_by_glob(os.path.join(DATA_DIR, 'ui_data*.xlsx'))
+    pattern: str = UI_PREFIX + '*.xlsx'
+    return get_data_file_by_glob(os.path.join(DATA_DIR, pattern))
 
 
 def make_shell_context():
@@ -504,6 +510,7 @@ def initdb_from_wb(
     api_file_path: str = get_api_data(),
     ui_file_path: str = get_ui_data(),
     overwrite: bool = False,
+    force: bool = False,
     callback=None) \
         -> dict:
     """Create the database.
@@ -511,6 +518,8 @@ def initdb_from_wb(
     Args:
         _app (Flask): Flask application for context
         overwrite (bool): Overwrite database if True, else update.
+        force (bool): Overwrite DB even if source data files present /
+        supplied are same versions as those active in DB?'
         api_file_path (str): path to "API data file" spec xls file
         ui_file_path (str): path to "UIdata file" spec xls file
         callback: Callback function for progress yields
@@ -530,7 +539,6 @@ def initdb_from_wb(
     """
     retore_msg = 'An issue occurred. Restoring database to state it was in ' \
                  'prior to task initialization.'
-
     current_sub_tasks: List[str] = [
         'Backing up database'] + (
         ['Dropping tables'] if overwrite else []) + [
@@ -547,6 +555,8 @@ def initdb_from_wb(
     progress = TaskTracker(queue=current_sub_tasks,
                            callback=callback,
                            name='Initialize database')
+    api_dataset_already_active = False
+    ui_dataset_already_active = False
     # TODO: Add this stuff to ProgressUpdater / TaskTracker
     warnings = {}
     status = {
@@ -564,12 +574,15 @@ def initdb_from_wb(
 
     with _app.app_context():
         try:
-            progress.begin()
             progress.next()
-            backup_path: str = backup_db()
+            try:
+                backup_path: str = backup_db()
+            except Exception as err:
+                warnings['backup_1'] = str(err)
 
             # Delete all tables except for 'datasets'
             if overwrite:
+
                 progress.next()
                 drop_tables()
                 Dataset.register_all_inactive()
@@ -603,7 +616,7 @@ def initdb_from_wb(
             try:
                 backup_path: str = backup_db()
             except Exception as err:
-                warnings['backup'] = str(err)
+                warnings['backup_2'] = str(err)
 
         except (OperationalError, AttributeError) as err:
             db.session.rollback()
@@ -768,175 +781,119 @@ def new_backup_path(ext: str = 'dump'):
     return os.path.join(BACKUPS_DIR, filename)
 
 
-def backup_using_sql_file(path: str = new_backup_path(ext = 'sql')):
-    """Backup using sql file
+def grant_full_permissions_to_file(path):
+    """Grant access to file
+
+    Raises:
+        PmaApiException: If errors during process
+    """
+    cmd: List[str] = 'chmod 600 {}'\
+        .format(path)\
+        .split(' ')
+    output: Dict = run_proc(cmd)
+    errors: str = output['stderr']
+
+    if errors:
+        raise PmaApiException(errors)
+
+
+def update_pgpass(creds: str, path: str = os.path.expanduser('~/.pgpass')):
+    """Update pgpass file with credentials
+
+    Side effects:
+        - Updates file
+        - Creates file if does not exist
 
     Args:
-        path (str): Path to save file
-
-    Returns:
-        str: path to backup file saved
+        creds (str): Url pattern string containing connection credentials
+        path (str): Path to pgpass file
     """
-    import psycopg2
-    import sys
+    cred_line: str = creds if creds.endswith('\n') else creds + '\n'
 
-    con = None
-    table_names = []
-
-    try:
-        con = psycopg2.connect(database=Config.DATABASE_NAME,
-                               user=Config.DATABASE_USER,
-                               password=Config.DATABASE_PASSWORD,
-                               port=Config.DATABASE_PORT)
-        cur = con.cursor()
-        cur.execute("""SELECT table_name FROM information_schema.tables
-               WHERE table_schema = 'public'""")
-        for table_tuple in cur.fetchall():
-            table_names.append(table_tuple[0])
-
-        f = open(path, 'w')
-        for table in table_names:
-            cur.execute('SELECT x FROM {}'.format(table))
-            for row in cur:
-                f.write('insert into {} values ({});'.format(table, str(row)))
-        f.close()
-    except psycopg2.DatabaseError as err:
-        print('Error {}'.format(err))
-        sys.exit(1)
-    finally:
-        if con:
-            con.close()
-
-    return path
+    with open(path, 'r') as file:
+        contents: str = file.read()
+        exists: bool = creds in contents
+        cred_line = cred_line if contents.endswith('\n') else cred_line + '\n'
+    if not exists:
+        with open(path, 'a+') as file:
+            file.write(cred_line)
 
 
-def run_process(cmd: List[str]):
-    """Run a process
-
-    Helper function to run a process, for boilerplate reduction.
-
-    Args:
-        cmd (list): Arguments to be executed
-
-    Returns:
-        str, str: Output of stdout, output of stderr
-    """
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            universal_newlines=True)
-    proc.stderr.close()
-    proc.stdout.close()
-    proc.wait()
-
-    return proc.stdout.read(), proc.stderr.read()
-
-
-def backup_using_pgdump_gz(path: str = new_backup_path(ext = 'gz')):
+def backup_using_pgdump(path: str = new_backup_path(ext = 'dump')) -> str:
     """Backup using pg_dump
 
     Args:
         path (str): Path of file to save
 
-    Raises
-        PmaApiDbInteractionError: If did not succeed
+    Side effects:
+        - Grants full permissions to .pgpass file
+        - Reads and writes to .pgpass file
+        - Runs pg_dump process, storing result to file system
+
+    Raises:
+        PmaApiDbInteractionError: If errors during process
 
     Returns:
         str: path to backup file saved
     """
-    import gzip
+    connection_info = {
+        'hostname': Config.DATABASE_HOST,
+        'port': Config.DATABASE_PORT,
+        'database': Config.DATABASE_NAME,
+        'username': Config.DATABASE_USER,
+        'password': Config.DATABASE_PASSWORD}
+    
+    pgpass_url: str = '{hostname}:{port}:{database}:{username}:{password}'\
+        .format(**connection_info)
+    pgpass_path = os.path.expanduser('~/.pgpass')
 
-    cmd = 'pg_dump -h localhost -U postgres {}'\
-        .format(Config.DATABASE_NAME)\
-        .split(' ')
+    grant_full_permissions_to_file(pgpass_path)
+    update_pgpass(path=pgpass_path, creds=pgpass_url)
 
-    with gzip.open(path, 'wb') as f:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,
-                                universal_newlines=True)
-        for line in iter(proc.stdout.readline, ''):
-            f.write(line.encode('utf-8'))
+    # 'pg_dump --format=custom --password --host={hostname} --port={port} '
+    cmd_str_base: str = \
+        'pg_dump --format=custom --host={hostname} --port={port} ' \
+        '--username={username} --dbname={database} --file {path}'
+    cmd_str: str = cmd_str_base.format(**connection_info, path=path)
+    cmd: List[str] = cmd_str.split(' ')
 
-    errors = proc.stderr.read()
+    output: Dict = run_proc(cmd)
+    errors: str = output['stderr']
     if errors:
-        err_msg = ''
-        for line in iter(proc.stderr.readline, ''):
-            err_msg += line.encode('utf-8')
-        if err_msg:
-            raise PmaApiDbInteractionError(err_msg)
-
-    proc.stderr.close()
-    proc.stdout.close()
-    proc.wait()
+        with open(os.path.expanduser('~/.pgpass'), 'r') as file:
+            pgpass_contents: str = file.read()
+        msg = '\n' + errors + \
+            'Offending command: ' + cmd_str_base.format(
+            **connection_info, path=path) + \
+            'Pgpass contents: ' + pgpass_contents
+        raise PmaApiDbInteractionError(msg)
 
     return path
 
 
-def backup_using_pgdump_dump(path: str = new_backup_path(ext = 'dump')):
-    """Backup using pg_dump
-
-    Args:
-        path (str): Path of file to save
-
-    Raises
-        PmaApiDbInteractionError: If did not succeed
-
-    Returns:
-        str: path to backup file saved
-    """
-    cmd = 'pg_dump -Fc {} --file {}'\
-        .format(Config.DATABASE_NAME, path)\
-        .split(' ')
-
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            universal_newlines=True)
-    for line in iter(proc.stdout.readline, ''):
-        print(line.encode('utf-8'))
-
-    errors = proc.stderr.read()
-    if errors:
-        # err_msg = ''
-        # for line in iter(proc.stderr.readline, ''):
-        #     err_msg += line.encode('utf-8')
-        # if err_msg:
-        #     raise PmaApiDbInteractionError(err_msg)
-        raise PmaApiDbInteractionError(errors)
-
-    proc.stderr.close()
-    proc.stdout.close()
-    proc.wait()
-
-    return path
-
-
-def backup_local(path: str = '', method: str = 'dump'):
+def backup_local(path: str = '') -> str:
     """Backup database locally
 
     Args:
         path (str): Path to save file
-        method (str): Method to back up file, e.g. 'gz', 'dump', etc
-
-    Returns:
-        str: Path to backup file saved
 
     Side effects:
         - Saves file at path
+
+    Raises:
+        PmaApiDbInteractionError: If DB exists and any errors during backup
+
+    Returns:
+        str: Path to backup file saved
     """
-    local_backup_method_map = {
-        'gz': backup_using_pgdump_gz,
-        'dump': backup_using_pgdump_dump,
-        'sql': backup_using_sql_file}
-    local_backup_func = local_backup_method_map[method]
     target_dir = os.path.dirname(path) if path else BACKUPS_DIR
 
     if not os.path.exists(target_dir):
         os.mkdir(target_dir)
 
     try:
-        if path:
-            saved_path = local_backup_func(path)
-        else:
-            saved_path = local_backup_func()
+        saved_path: str = backup_using_pgdump(path) if path \
+            else backup_using_pgdump()
         return saved_path
     except PmaApiDbInteractionError as err:
         if db_not_exist_tell not in str(err):
@@ -1054,12 +1011,11 @@ def backup_db_cloud(path_or_filename: str = ''):
     return filename
 
 
-def backup_db(path: str = '', method: str = 'dump'):
+def backup_db(path: str = ''):
     """Backup database locally and to the cloud
 
     Args:
         path (str): Path to save file
-        method (str): Method to back up file, e.g. 'gz', 'dump', etc
 
     Side effects:
         - backup_local()
@@ -1068,7 +1024,7 @@ def backup_db(path: str = '', method: str = 'dump'):
     Returns:
         str: Path saved locally
     """
-    saved_path: str = backup_local(path, method)
+    saved_path: str = backup_local(path)
     backup_db_cloud(saved_path)
 
     return saved_path
@@ -1104,7 +1060,8 @@ def restore_using_pgrestore(path: str):
     proc.wait()
 
 
-def superuser_dbms_connection() -> Connection:
+def superuser_dbms_connection(
+        connection_url: str = os.getenv('DBMS_SUPERUSER_URL')) -> Connection:
     """Connect to database management system as a super user
 
     Returns:
@@ -1112,7 +1069,6 @@ def superuser_dbms_connection() -> Connection:
     """
     from sqlalchemy import create_engine
 
-    connection_url = os.getenv('DBMS_SUPERUSER_URL')
     engine_default = create_engine(connection_url)
     conn: sqlalchemy.engine.Connection = engine_default.connect()
 
@@ -1194,19 +1150,27 @@ def drop_db(db_name: str = Config.DATABASE_NAME, hard: bool = False):
         for pid in process_ids:
             os.kill(pid, signal.SIGTERM)
 
-    cmd = 'dropdb {}'.format(db_name).split(' ')
+    cmd_str: str = 'dropdb {}'.format(db_name)
+    cmd: List[str] = cmd_str.split(' ')
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
                             universal_newlines=True)
-    for line in iter(proc.stdout.readline, ''):
-        print(line.encode('utf-8'))
+
+    try:
+        for line in iter(proc.stdout.readline, ''):
+            print(line.encode('utf-8'))
+    except AttributeError:
+        print(proc.stdout)
+
     errors = proc.stderr.read()
     if errors:
         db_exists = False if db_not_exist_tell in errors else True
         if db_exists:
-            log_process_stderr(proc.stderr, err_msg=db_mgmt_err)
-            raise PmaApiDbInteractionError(errors)
+            msg = '\n' + errors + \
+                'Offending command: ' + cmd_str
+            log_process_stderr(msg, err_msg=db_mgmt_err)
+            raise PmaApiDbInteractionError(msg)
 
     proc.stderr.close()
     proc.stdout.close()
