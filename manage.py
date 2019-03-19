@@ -7,7 +7,8 @@ from sys import stderr
 # noinspection PyPackageRequirements
 from dotenv import load_dotenv
 from flask_script import Manager, Shell
-from flask_migrate import Migrate, upgrade as \
+# from flask_migrate import Migrate, upgrade as \
+from flask_migrate import upgrade as \
     flask_migrate_upgrade, migrate as flask_migrate_migrate, stamp, \
     MigrateCommand
 from psycopg2 import DatabaseError
@@ -28,7 +29,9 @@ from pma_api.utils import dict_to_pretty_json
 load_dotenv(dotenv_path=Path(PROJECT_ROOT_DIR) / '.env')
 app = create_app(os.getenv('ENV_NAME', 'default'))
 manager = Manager(app)
-migrate = Migrate(app, db)
+# TODO: Not actually sure where/if this was ever used. Probably safe to remove.
+# - jef 2019.03.19
+# migrate = Migrate(app, db)
 
 
 @manager.option('--overwrite', action='store_true', help='Drop tables first?')
@@ -360,7 +363,13 @@ def release(overwrite: bool = True, force: bool = False,
         'Initialize database'
     ])
     progress.next()
-    upgrade(silent=silent_upgrade)
+    # TODO: unbroaden
+    # noinspection PyBroadException
+    try:
+        upgrade(silent=silent_upgrade)
+    except Exception:
+        migrate(force=True)
+        upgrade(silent=silent_upgrade)
 
     progress.next()
     initdb(overwrite=overwrite, force=force)

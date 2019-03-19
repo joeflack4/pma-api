@@ -28,7 +28,7 @@ logs-staging virtualenv-make virtualenvwrapper-make virtualenv-activate \
 virtualenvwrapper-activate deactivate virtualenv-deactivate connect-staging \
 virtualenvwrapper-deactivate restore restore-test backup % connect-production \
 migrate_db migrate upgrade_db upgrade list-backups list list-api-data \
-list-datasets list-ui-data backup-source-files release
+list-datasets list-ui-data backup-source-files release migrate-fix
 
 # ALL LINTING
 lint:
@@ -95,6 +95,10 @@ translations:
 migrate_db:
 	@python3 manage.py migrate
 migrate: migrate_db
+migrate-fix:
+#	alembic --config migrations/alembic.ini stamp head
+#	make migrate
+	@python3 manage.py migrate --force
 upgrade_db:
 	@python3 manage.py upgrade
 upgrade: upgrade_db
