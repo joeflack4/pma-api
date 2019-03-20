@@ -108,6 +108,7 @@ migrate_db:
 	control.
 	@echo https://flask-migrate.readthedocs.io/en/latest/
 migrate: migrate_db
+
 migrate-fix:
 	alembic --config migrations/alembic.ini stamp head
 	make migrate
